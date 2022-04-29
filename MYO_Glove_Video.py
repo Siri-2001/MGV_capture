@@ -20,9 +20,7 @@ ret_frame=None
 fre = 0.01
 import cv2 as cv
 
-capture = cv.VideoCapture(0)
 
-# 定义编码方式并创建VideoWriter对象
 
 class BluetoothConnector:
     def __init__(self, device_addr, device_name, data_uuid):
@@ -106,36 +104,55 @@ class BluetoothConnector:
 
 async def output_glove(device1, fre):
     # 主要修改这里
-    global glove_data, myo_data, myo_device,ret_frame
+    global glove_data
     while True:
         glove_data = [float(i) for i in device1.fingers_data] + device1.euler
-        # myo_data = list(myo_device.emg) + list(np.array(list(myo_device.orientation))[[1, 2, 3, 0]])
-        # ret_frame = capture.read()
+        #print('glove',time.perf_counter() ,glove_data)
         await asyncio.sleep(fre)
 
-async def output_myo(device1, fre):
+# async def output_myo(device1, fre):
+#     # 主要修改这里
+#     global myo_data, myo_device
+#     while True:
+#         myo_data = list(myo_device.emg) + list(np.array(list(myo_device.orientation))[[1, 2, 3, 0]])
+#         print(myo_data)
+#         await asyncio.sleep(fre)
+#
+# async def output_video():
+#     global ret_frame,videocapture
+#     while (videocapture.isOpened()):
+#         ret_frame = videocapture.read()
+
+
+# def output_glove(device1, fre):
+#     # 主要修改这里
+#     global glove_data
+#     while True:
+#         glove_data = [float(i) for i in device1.fingers_data] + device1.euler
+#         time.sleep(fre)
+#
+def output_myo(myo_device,fre):
     # 主要修改这里
-    global glove_data, myo_data, myo_device,ret_frame
+    global myo_data
     while True:
-        # glove_data = [float(i) for i in device1.fingers_data] + device1.euler
-        myo_data = list(myo_device.emg) + list(np.array(list(myo_device.orientation))[[1, 2, 3, 0]])
-        # ret_frame = capture.read()
-        await asyncio.sleep(fre)
+        if myo_device is not None:
+            myo_data = list(myo_device.emg) + list(np.array(list(myo_device.orientation))[[1, 2, 3, 0]])
+            #print('myo',time.perf_counter() ,myo_data)
+        time.sleep(fre)
 
-async def output_video(device1, fre):
-    # 主要修改这里
-    global glove_data, myo_data, myo_device,ret_frame
-    while (capture.isOpened()):
-        #glove_data = [float(i) for i in device1.fingers_data] + device1.euler
-        #myo_data = list(myo_device.emg) + list(np.array(list(myo_device.orientation))[[1, 2, 3, 0]])
-        ret_frame = capture.read()
-        await asyncio.sleep(fre)
+def output_video():
+    global ret_frame,videocapture
+    while (videocapture.isOpened()):
+        ret_frame = videocapture.read()
+        #print(ret_frame)
+
 
 
 def capture(fre):
     # print('执行capture')
     # 首先asyncio获取一个主循环
     # loop = asyncio.get_event_loop()
+    global myo_device
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -147,17 +164,20 @@ def capture(fre):
     # loop执行start notify，开始持续接收手套的数据
     loop.run_until_complete(device1.client.start_notify(device1.data_uuid, device1.rx_callback))
     # loop执行打印操作，将device对象中的data打印出来，这里设置的打印频率是1s，逻辑可以自行更改
-    loop.run_until_complete(output_glove(device1, fre=fre))
-    loop.run_until_complete(output_myo(device1, fre=fre))
-    loop.run_until_complete(output_video(device1, fre=fre))
+    myo_thread = threading.Thread(target=output_myo, args=[myo_device,fre])
+    myo_thread.start()
+    loop.run_until_complete(output_glove(device1,fre))
+
     # 结束eventloop
+
+
     loop.close()
 
 
 def save(name, text):
     global glove_data, myo_data,fourcc,ret_frame
     os.mkdir('data/'+name)
-    outfile = cv.VideoWriter('data/+'+name+'_video.avi', fourcc, 200, (1024, 1024))
+    outfile = cv.VideoWriter('data\\'+name+'\\' + name +'_video.avi', fourcc,  50., (640, 480))
     if os.path.exists('data'):
         if not os.path.exists("data\\" + name + ".txt"):
             while True:
@@ -168,11 +188,10 @@ def save(name, text):
             while True:
                 # int_data = [round(float(i))  for i in glove_data[0:5]]
                 if glove_data != []:
-                    print(glove_data, file=open("data\\" + name + "_glove.txt", 'a'))
-                    print(myo_data, file=open("data\\" + name + "_myo.txt", 'a'))
-                    if ret_frame[0]:
+                    print(glove_data, file=open("data\\"+name+"\\" + name + "_glove.txt", 'a'))
+                    print(myo_data, file=open("data\\"+name+"\\"  + name + "_myo.txt", 'a'))
+                    if ret_frame is not None and ret_frame[0]:
                         outfile.write(ret_frame[1])  # 写入文件
-                    cv.imshow('frame', ret_frame[1])
                 if get_earth_angle([round(float(i)) for i in glove_data[5:]])[0] > 150:
                     text.insert('0.0', name + ': 结束采集\n')
                     break
@@ -199,8 +218,10 @@ async def get_bluetoothlist():
 
 def create_cap():
     global root, v, device_addr
+
     cap_thread = threading.Thread(target=capture, args=[fre])
     cap_thread.start()
+
     device_addr = radiobt_list[v.get()][1]
 
     top = Toplevel()
@@ -225,7 +246,9 @@ def create_cap():
 
 
 if __name__ == "__main__":
-
+    videocapture = cv.VideoCapture(0, cv.CAP_DSHOW)
+    fourcc = cv.VideoWriter_fourcc(*'MJPG')
+    # 定义编码方式并创建VideoWriter对象
     myo.init(os.path.dirname(__file__))  # myo初始化，注意路径下要有之前说的dll文件
     feed = myo.Feed()
     hub = myo.Hub()
@@ -237,6 +260,9 @@ if __name__ == "__main__":
     myo_device.set_stream_emg(myo.StreamEmg.enabled)
     time.sleep(2)
     # 这里建议停一段时间，因为它不会马上就准备好，如果不停会输出一段空值，具体停多久大家可以自己试一下
+
+    video_thread = threading.Thread(target=output_video)
+    video_thread.start()
 
     asyncio.run(get_bluetoothlist())
     root = Tk()
