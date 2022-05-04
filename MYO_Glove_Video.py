@@ -1,5 +1,7 @@
 # encoding utf-8
 import asyncio, threading, time
+import random
+
 from bleak import BleakScanner, BleakClient
 from util import *
 from tkinter import *
@@ -16,8 +18,12 @@ bluetoothlist = []
 glove_data = []
 myo_data = []
 ret_frame=None
+ret_frame45=None
+ret_frame90=None
 fre = 0.01
 import cv2 as cv
+
+
 
 
 
@@ -41,7 +47,6 @@ class BluetoothConnector:
     async def rx_callback(self, sender: int, data: bytearray):
         # data = int(data)
         # print(data)
-        global finger_thresold
         data = [i for i in data]
         # print('data',data)
         l = len(data)
@@ -52,6 +57,7 @@ class BluetoothConnector:
 
             finger_data = finger_analyze(data[10:20])
             self.fingers_data = finger_data
+            #print(self.fingers_data)
             euler_data = euler_analyze(data[20:28])
             self.euler = euler_data
             # self.pry = get_earth_angle(self.euler)
@@ -61,7 +67,7 @@ class BluetoothConnector:
             #普通版
             self.time_stamp = timestamp_analyze(data[6:8])
             finger_data = finger_analyze_d(data[8:18])
-            # print(finger_data)
+            #print(finger_data)
             self.fingers_data = finger_data
             euler_data = euler_analyze_d(data[28:36])
             self.euler = euler_data
@@ -109,7 +115,6 @@ async def output_glove(device1, fre):
     global glove_data
     while True:
         glove_data = [time.perf_counter()]+[float(i) for i in device1.fingers_data] + device1.euler
-        #print('glove',time.perf_counter() ,glove_data)
         await asyncio.sleep(fre)
 
 # async def output_myo(device1, fre):
@@ -126,30 +131,35 @@ async def output_glove(device1, fre):
 #         ret_frame = videocapture.read()
 
 
-# def output_glove(device1, fre):
-#     # 主要修改这里
-#     global glove_data
-#     while True:
-#         glove_data = [float(i) for i in device1.fingers_data] + device1.euler
-#         time.sleep(fre)
-#
+
+
 def output_myo(myo_device,fre):
     # 主要修改这里
     global myo_data
+    cur=time.perf_counter()
     while True:
+        if time.perf_counter()-cur<fre:
+            time.sleep(0.5*fre*random.random())
+            continue
+        cur=time.perf_counter()
         if myo_device is not None:
             myo_data = [time.perf_counter()]+list(myo_device.emg)+list(myo_device.acceleration)+list(myo_device.gyroscope)+list(np.array(list(myo_device.orientation))[[1, 2, 3, 0]])
-            #print('myo',time.perf_counter() ,myo_data)
-        time.sleep(fre)
+        #print(myo_data)
 
 def output_video():
-    global ret_frame,videocapture
-    while (videocapture.isOpened()):
-        ret,frame = videocapture.read()
+    global ret_frame,ret_frame45,ret_frame90,videocapture,videocapture45,videocapture90
+    while (videocapture.isOpened() and videocapture45.isOpened() and videocapture90.isOpened()):
+        ret, frame = videocapture.read()
         ret_frame=(ret,frame,time.perf_counter())
         cv.imshow('Camera:Front', ret_frame[1])
+        ret45, frame45 = videocapture45.read()
+        ret_frame45=(ret45,frame45,time.perf_counter())
+        cv.imshow('Camera:45', ret_frame45[1])
+        ret90, frame90 = videocapture90.read()
+        ret_frame90=(ret90,frame90,time.perf_counter())
+        cv.imshow('Camera:90', ret_frame90[1])
         cv.waitKey(1)
-        #print(ret_frame)
+        #print(ret_frame[1].shape,ret_frame45[1].shape,ret_frame90[1].shape)
 
 
 
@@ -180,33 +190,49 @@ def capture(fre):
 
 
 def save(name, text):
-    global glove_data, myo_data,fourcc,ret_frame,finger_thresold
-    os.mkdir('data/'+name)
+    global glove_data, myo_data,fourcc,ret_frame,ret_frame45,ret_frame90,finger_thresold
+    try:
+        os.mkdir('data/'+name)
+    except:
+        print(name+'已存在')
+        return
+    capture_times = 3
     width = int(videocapture.get(cv.CAP_PROP_FRAME_WIDTH))
     height = int(videocapture.get(cv.CAP_PROP_FRAME_HEIGHT))
-    # print(width,height)
-    outfile = cv.VideoWriter('data\\'+name+'\\' + name +'_video.mp4', fourcc,  50., (width, height))
+
     if os.path.exists('data'):
-        if not os.path.exists("data\\" + name + ".txt"):
+        for ctime in range(capture_times):
+            #print(ctime)
+            outfile = cv.VideoWriter('data\\' + name + '\\' + name +'_video'+ str(ctime+1)+'.mp4', fourcc, 50., (width, height))
+            outfile45 = cv.VideoWriter('data\\' + name + '\\' + name + '_45video' + str(ctime + 1) + '.mp4', fourcc, 50.,
+                                     (width, height))
+            outfile90 = cv.VideoWriter('data\\' + name + '\\' + name + '_90video' + str(ctime + 1) + '.mp4', fourcc, 50.,
+                                     (width, height))
             while True:
-                bool_data = [round(float(i)) > 150 for i in glove_data[2:6]]  # 在这里需要调节开发板和普通版的区别80&200
-                if glove_data != [] and all(bool_data):
-                    text.insert('0.0', name + ': 开始采集\n')
+                bool_data = [round(float(i)) > 200 for i in glove_data[2:6]]
+                angle=get_earth_angle([round(float(i)) for i in glove_data[6:]])[0] # 在这里需要调节开发板和普通版的区别80&200
+                #print(bool_data,glove_data[2:6])
+                if glove_data != [] and all(bool_data) and angle<120:
+                    text.insert('0.0', name + str(ctime+1)+ ': 开始采集\n')
                     break
             while True:
                 # int_data = [round(float(i))  for i in glove_data[0:5]]
                 if glove_data != []:
-                    print(glove_data, file=open("data\\"+name+"\\" + name + "_glove.txt", 'a'))
-                    print(myo_data, file=open("data\\"+name+"\\"  + name + "_myo.txt", 'a'))
+                    print(glove_data, file=open("data\\"+name+"\\" + name + "_glove" +str(ctime+1)+".txt", 'a'))
+                    print(myo_data, file=open("data\\"+name+"\\"  + name +  "_myo"+ str(ctime+1)+".txt", 'a'))
                     if ret_frame is not None and ret_frame[0]:
                         outfile.write(ret_frame[1])  # 写入文件
-                        print(ret_frame[2], file=open("data\\" + name + "\\" + name + "_videotime.txt", 'a'))
+                        print(ret_frame[2], file=open("data\\" + name + "\\" + name +  "_videotime"+ str(ctime+1)+".txt", 'a'))
+                    if ret_frame45 is not None and ret_frame45[0]:
+                        outfile45.write(ret_frame45[1])  # 写入文件
+                        print(ret_frame45[2], file=open("data\\" + name + "\\" + name +  "_45videotime"+ str(ctime+1)+".txt", 'a'))
+                    if ret_frame90 is not None and ret_frame90[0]:
+                        outfile90.write(ret_frame90[1])  # 写入文件
+                        print(ret_frame90[2], file=open("data\\" + name + "\\" + name +  "_90videotime"+ str(ctime+1)+".txt", 'a'))
                 if get_earth_angle([round(float(i)) for i in glove_data[6:]])[0] > 150:
-                    text.insert('0.0', name + ': 结束采集\n')
+                    text.insert('0.0', name + str(ctime+1)+ ': 结束采集\n')
                     break
                 time.sleep(fre)
-        else:
-            text.insert('0.0', name + ': 已经被采集过了，不可以被重复采集\n')
     else:
         os.mkdir('data')
         save(name, text)
@@ -256,7 +282,10 @@ def create_cap():
 
 if __name__ == "__main__":
     videocapture = cv.VideoCapture(0, cv.CAP_DSHOW)
+    videocapture45 = cv.VideoCapture(1, cv.CAP_DSHOW)
+    videocapture90 = cv.VideoCapture(2, cv.CAP_DSHOW)
     fourcc = cv.VideoWriter_fourcc(*"mp4v")
+
     # 定义编码方式并创建VideoWriter对象
     myo.init(os.path.dirname(__file__))  # myo初始化，注意路径下要有之前说的dll文件
     feed = myo.Feed()
